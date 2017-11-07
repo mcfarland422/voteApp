@@ -14,6 +14,49 @@ connection.connect((error)=>{
 	}
 });
 
+function start(){
+	return new Promise((resolve, reject)=>{
+		resolve([{userID:1}]);
+	});
+}
+
+function queryOne(results){
+	return new Promise((resolve, reject)=>{
+		const selectQuery = `SELECT * FROM users WHERE id = ?`;
+		connection.query(selectQuery,[results[0].userID], (error, results)=>{
+			if(error){
+				reject(error);
+			}else{
+				resolve(results);
+			}		
+		});
+	});
+}
+
+function queryTwo(results){
+	return new Promise((resolve, reject)=>{
+		const selectQuery = `SELECT * FROM votes WHERE userID = ?`;
+		connection.query(selectQuery,[results[0].id],(error,results)=>{
+			if(error){
+				reject(error);
+			}else{
+				resolve(results);
+			}
+		})
+	});
+}
+
+// start()
+// 	.then((q1d)=>queryOne(q1d))
+// 	.then((q2d)=>queryTwo(q2d))
+// 	.then((q3d)=>queryOne(q3d))
+// 	.then((q4d)=>queryTwo(q4d))
+// 	.then((q5d)=>queryOne(q5d))
+// 	.then((q6d)=>queryTwo(q6d))
+// 	.then((q7d)=>console.log(q7d)
+// );
+
+
 /* GET home page. */
 router.get('/', function(req, res, next) {
 	if(req.session.name === undefined){
@@ -24,27 +67,45 @@ router.get('/', function(req, res, next) {
 
 	const getBands = new Promise((resolve, reject)=>{
 		// Go get the images...
-		var selectQuery = `SELECT * FROM bands;`;
-		connection.query(selectQuery,(error, results, fields)=>{
+		// Select all the images, THIS user has not voted on
+		// var selectQuery = `SELECT * FROM bands;`;
+		var selectSpecificBands = `
+			SELECT * FROM bands WHERE id NOT IN(
+				SELECT imageID FROM votes WHERE userID = ?
+			);
+		`
+		connection.query(selectSpecificBands,[req.session.uid],(error, results, fields)=>{
 			if(error){
 				reject(error)
 			}else{
-				var rand = Math.floor(Math.random() * results.length);	
-				resolve(results[rand]);
-				// resolve({
-				// 	rand: rand,
-				// 	band: results[rand]
-				// })
+				if(results.length == 0){
+					// user is out of options. Let them know.
+					resolve("done");
+				}else{
+					var rand = Math.floor(Math.random() * results.length);	
+					resolve(results[rand]);
+					// resolve({
+					// 	rand: rand,
+					// 	band: results[rand]
+					// })					
+				}
+
 			}
 		});
 	});
 
 	getBands.then(function(bandObj){
-		console.log(bandObj);
-		res.render('index', { 
-			name: req.session.name,
-			band: bandObj
-		});		
+		if(bandObj === "done"){
+			// out of bands.
+			res.redirect('/standings?msg=finished')
+		}else{
+			console.log(bandObj);
+			res.render('index', { 
+				name: req.session.name,
+				band: bandObj,
+				loggedIn: true
+			});
+		}
 	});
 	getBands.catch((error)=>{
 		res.json(error);
@@ -124,8 +185,9 @@ router.post('/loginProcess', (req, res, next)=>{
 					req.session.name = row.name;
 					req.session.uid = row.id;
 					req.session.email = row.email;
+					req.session.loggedIn = true;
 					console.log(req.session.uid)
-					res.redirect('/');
+					res.redirect('/?msg=loginSucces');
 				}else{
 					// user in db, but password is bad. Send them back to login
 					res.redirect('/login?msg=badPass');
@@ -134,6 +196,12 @@ router.post('/loginProcess', (req, res, next)=>{
 		}
 	})
 });
+
+router.get('/logout',(req, res)=>{
+	req.session.destroy();
+	res.redirect('/login');
+})
+
 
 router.get('/vote/:direction/:bandId', (req, res)=>{
 	// res.json(req.params);
@@ -149,5 +217,28 @@ router.get('/vote/:direction/:bandId', (req, res)=>{
 		}
 	});
 });
+
+router.get('/standings',(req, res)=>{
+	const standingsQuery = `
+		SELECT bands.title,bands.imageUrl,votes.imageID, SUM(IF(voteDirection='up',1,0)) as upVotes, SUM(IF(voteDirection='down',1,0)) as downVotes, SUM(IF(voteDirection='up',2,-1)) as total FROM votes
+			INNER JOIN bands on votes.imageID = bands.id
+			GROUP BY imageID;	
+	`
+
+	// const giveMeAllTheDataAndIWillFigureItOut = `
+	// 	SELECT * FROM votes
+	// 		INNER JOIN bands on votes.imageID = bands.id
+	// `
+
+	connection.query(standingsQuery,(error, results)=>{
+		if(error){
+			throw error;
+		}else{
+			res.render('standings',{
+				standingsResults: results
+			});
+		}
+	})
+})
 
 module.exports = router;
